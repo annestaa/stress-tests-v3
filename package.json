@@ -1,0 +1,7 @@
+{
+  "name": "k6-minigames-automation",
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}
