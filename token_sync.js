@@ -13,9 +13,8 @@ const PORT = 9876;
 let activeSolvePromise = null;
 let lastSolveTimestamp = 0;
 let dosBlockCooldownUntil = 0;
-let cachedToken = "";
-let cachedTokenTimestamp = 0;
-const TOKEN_CACHE_TTL_MS = 90000; // Token reCAPTCHA valid ~2 menit, cache 90 detik
+const tokenPool = [];
+const MAX_POOL_SIZE = 5;
 
 /**
  * Menemukan file env yang aktif (.env.api, .env.browser, atau .env)
@@ -61,40 +60,34 @@ function getEnvValue(key, fallback = "") {
 function updateEnvToken(token) {
   if (!token || typeof token !== "string") return false;
   try {
-    cachedToken = token.trim();
-    cachedTokenTimestamp = Date.now();
-
-    const envPaths = getActiveEnvPaths();
-    if (envPaths.length === 0) {
-      envPaths.push(path.join(__dirname, ".env"));
-    }
-
-    for (const envPath of envPaths) {
-      try {
-        let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
-        if (content.includes("GRECAPTCHA_TOKEN=")) {
-          content = content.replace(/^GRECAPTCHA_TOKEN=.*$/m, `GRECAPTCHA_TOKEN=${token.trim()}`);
+    const envFiles = [".env.api", ".env.browser", ".env"];
+    for (const file of envFiles) {
+      const p = path.join(__dirname, file);
+      if (fs.existsSync(p)) {
+        let content = fs.readFileSync(p, "utf8");
+        // Regex untuk me-replace token lama
+        const regex = /^GRECAPTCHA_TOKEN=.*$/m;
+        if (regex.test(content)) {
+          content = content.replace(regex, `GRECAPTCHA_TOKEN=${token.trim()}`);
         } else {
           content += `\nGRECAPTCHA_TOKEN=${token.trim()}\n`;
         }
-        fs.writeFileSync(envPath, content, "utf-8");
-        console.log(`[Token Sync] 💾 GRECAPTCHA_TOKEN berhasil di-rewrite ke ${path.basename(envPath)}!`);
-      } catch (err) {
-        console.error(`[Token Sync] Gagal rewrite ${path.basename(envPath)}:`, err.message);
+        fs.writeFileSync(p, content, "utf8");
+        console.log(`[Token Sync] 💾 GRECAPTCHA_TOKEN berhasil di-rewrite ke ${file}!`);
       }
     }
     return true;
   } catch (err) {
-    console.error("[Token Sync] Gagal rewrite env:", err.message);
+    console.error(`[Token Sync] ❌ Gagal update token di .env:`, err.message);
     return false;
   }
 }
 
 /**
- * Baca GRECAPTCHA_TOKEN dari file .env
+ * Tidak dipakai lagi karena token ada di pool
  */
 function readEnvToken() {
-  return getEnvValue("GRECAPTCHA_TOKEN", "");
+  return "";
 }
 
 /**
@@ -464,14 +457,7 @@ async function solveRecaptchaSafely(bypassCache = false) {
     return "";
   }
 
-  // 2. Cek Cache Token jika tidak di-bypass
-  if (!bypassCache && cachedToken && now - cachedTokenTimestamp < TOKEN_CACHE_TTL_MS) {
-    console.log(`[Token Sync] ⚡ Menggunakan token reCAPTCHA dari cache memori (${Math.round((now - cachedTokenTimestamp) / 1000)}s yang lalu)`);
-    return cachedToken;
-  }
-
-  // Clear cache saat fresh solve diminta
-  cachedToken = "";
+  // Clear cache logic removed since we use Token Pool
 
   // 3. Batasi frekuensi pemanggilan solver lokal (minimal 6 detik jeda)
   const minInterval = parseInt(getEnvValue("CAPTCHA_MIN_INTERVAL_SEC", "6"), 10) * 1000;
@@ -539,11 +525,14 @@ async function solveRecaptchaSafely(bypassCache = false) {
         syncPrimaryChromeProfile(USER_DATA_DIR);
       } else {
         console.log("[Token Sync] 🕵️ Menggunakan profil browser kosong (Tanpa Chrome Profile)...");
-        // Bersihkan folder user_data jika sebelumnya ada sisa profil
-        if (fs.existsSync(USER_DATA_DIR)) {
+        // Hapus folder user_data HANYA jika clearCookieEnv true
+        const clearCookieEnv = getEnvValue("CLEAR_COOKIE", "false").toLowerCase() === "true";
+        if (clearCookieEnv && fs.existsSync(USER_DATA_DIR)) {
           try { fs.rmSync(USER_DATA_DIR, { recursive: true, force: true }); } catch (e) { }
         }
-        fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+        if (!fs.existsSync(USER_DATA_DIR)) {
+          fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+        }
       }
 
       const proxyServer = getEnvValue("PROXY_SERVER", getEnvValue("HTTP_PROXY", ""));
@@ -587,8 +576,7 @@ async function solveRecaptchaSafely(bypassCache = false) {
     // Stealth Script Injection (dihapus agar solver lebih cepat)
 
     // Clear Cookie jika diminta (Otomatis aktif jika USE_CHROME_PROFILE=false, atau jika CLEAR_COOKIE=true)
-    const useChromeProfileSetting = getEnvValue("USE_CHROME_PROFILE", "false").toLowerCase() === "true";
-    const clearCookieEnv = getEnvValue("CLEAR_COOKIE", useChromeProfileSetting ? "false" : "true").toLowerCase() === "true";
+    const clearCookieEnv = getEnvValue("CLEAR_COOKIE", "false").toLowerCase() === "true";
 
     if (clearCookieEnv) {
       console.log("[Token Sync] 🧹 Membersihkan cookies browser...");
@@ -740,24 +728,32 @@ async function solveRecaptchaSafely(bypassCache = false) {
 
           await page.waitForTimeout(3000);
 
-          // Cek apakah jawaban diterima atau ada error
-          const errorMsg = await bframe.locator(".rc-audiochallenge-error-message").textContent().catch(() => "");
-          if (errorMsg && errorMsg.trim()) {
-            console.warn(`[Token Sync] ⚠️ Audio challenge error setelah submit: "${errorMsg.trim()}"`);
+          let retryCount = 0;
+          let currentAudioUrl = audioUrl;
 
-            // Retry: ambil audio baru dan coba lagi
-            console.log("[Token Sync] 🔁 Mencoba audio challenge ulang dengan clip baru...");
-            await page.waitForTimeout(1000);
+          while (retryCount < 5) {
+            const errorMsg = await bframe.locator(".rc-audiochallenge-error-message").textContent().catch(() => "");
+            // Jika pesan tidak ada atau kosong, berarti sukses (atau popup berubah)
+            if (!errorMsg || !errorMsg.trim()) {
+              break;
+            }
+
+            console.warn(`[Token Sync] ⚠️ Audio challenge error setelah submit: "${errorMsg.trim()}"`);
+            console.log(`[Token Sync] 🔁 Mencoba audio challenge ulang dengan clip baru (Retry ${retryCount + 1}/5)...`);
+            await page.waitForTimeout(1500);
+
             const retryAudioSource = bframe.locator("#audio-source");
             const retryDownloadLink = bframe.locator(".rc-audiochallenge-tdownload-link");
             let retryAudioUrl = "";
+            
             if (await retryDownloadLink.isVisible().catch(() => false)) {
               retryAudioUrl = await retryDownloadLink.getAttribute("href").catch(() => "");
             } else if (await retryAudioSource.isVisible().catch(() => false)) {
               retryAudioUrl = await retryAudioSource.getAttribute("src").catch(() => "");
             }
 
-            if (retryAudioUrl && retryAudioUrl !== audioUrl) {
+            if (retryAudioUrl && retryAudioUrl !== currentAudioUrl) {
+              currentAudioUrl = retryAudioUrl;
               const retryAnswer = await solveAudioChallenge(retryAudioUrl, witToken);
               if (retryAnswer) {
                 console.log(`[Token Sync] 🎯 Retry Wit.ai audio solved: "${retryAnswer}"`);
@@ -777,9 +773,16 @@ async function solveRecaptchaSafely(bypassCache = false) {
                 await page.waitForTimeout(500);
                 await retryInput.press("Enter").catch(() => { });
 
-                await page.waitForTimeout(3000);
+                await page.waitForTimeout(3500);
+              } else {
+                console.warn("[Token Sync] ❌ Wit.ai gagal pada retry.");
+                break;
               }
+            } else {
+              // Jika audio URL tidak berubah atau tidak ada, tidak bisa retry
+              break;
             }
+            retryCount++;
           }
         } else {
           console.warn("[Token Sync] ❌ Wit.ai tidak menghasilkan transkrip yang valid. Audio challenge gagal.");
@@ -828,6 +831,10 @@ function requestTokenWithMutex(bypassCache = false) {
 // ==============================================================================
 // HTTP Server Daemon
 // ==============================================================================
+
+let globalCachedToken = "";
+let globalCachedTokenTime = 0;
+
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -841,7 +848,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
-  // Endpoint 1: Simpan token reCAPTCHA ke .env
+  // Endpoint 1: POST /token (bisa diabaikan, tapi untuk kompatibilitas kita buat push ke pool)
   if (req.method === "POST" && url.pathname === "/token") {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -852,7 +859,7 @@ const server = http.createServer(async (req, res) => {
         if (token) {
           updateEnvToken(token);
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, message: "Token saved to .env" }));
+          res.end(JSON.stringify({ success: true, message: "Token saved to pool" }));
         } else {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Missing token parameter" }));
@@ -865,33 +872,75 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Endpoint 2: Ambil token reCAPTCHA yang tersimpan di .env
+  // Endpoint 2: GET /token -> Mengambil dan menghapus (POP) token dari antrean
   if (req.method === "GET" && url.pathname === "/token") {
-    const token = readEnvToken();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ token, isCached: false }));
+    const tokenObj = tokenPool.shift(); // Ambil token paling atas
+    
+    if (tokenObj && tokenObj.token) {
+      console.log(`[Token Sync] 📤 k6 mengambil token dari antrean. Sisa stok: ${tokenPool.length}`);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ token: tokenObj.token }));
+    } else {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Pool empty" }));
+    }
     return;
   }
 
-  // Endpoint 3: Refresh token secara aman via Mutex Single-Flight Solver
-  if (req.method === "GET" && url.pathname === "/refresh") {
+  // Endpoint 3: GET /refresh -> Mengambil reCAPTCHA baru (dengan cache Daemon)
+  if (req.method === "GET" && url.pathname.startsWith("/refresh")) {
     try {
-      const freshToken = await requestTokenWithMutex(true);
-      if (freshToken) {
+      const now = Date.now();
+      const urlParams = new URL(req.url, `http://${req.headers.host}`);
+      const force = urlParams.searchParams.get("force") === "true";
+
+      // Cache valid selama 115 detik
+      const cacheAgeMs = now - globalCachedTokenTime;
+
+      if (force) {
+        // PENTING: Jika cache baru saja diperbarui (misal < 15 detik lalu), kemungkinan
+        // besar itu adalah karena VU lain SUDAH force-refresh lebih dulu (semua VU
+        // berbagi token yang sama sehingga mereka kena 422 di waktu yang hampir bersamaan).
+        // Jangan invalidate & solve captcha LAGI — cukup reuse token fresh yang sudah ada.
+        // Tanpa guard ini, 3 VU yang force=true dalam beberapa detik akan memicu
+        // 3x solve captcha berturut-turut → memicu Google DOS cooldown.
+        if (globalCachedToken && cacheAgeMs < 30000) {
+          console.log(`[Token Sync Server] ℹ️ Force refresh diminta, tapi cache baru berumur ${(cacheAgeMs / 1000).toFixed(1)}s (kemungkinan VU lain sudah refresh, atau proses solve masih berlangsung saat 422 diterima). Reuse token fresh ini...`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ token: globalCachedToken }));
+          return;
+        }
+        console.log("[Token Sync Server] ⚠️ Token ditolak server (422). Force refresh requested, invalidating cache...");
+        globalCachedToken = "";
+        globalCachedTokenTime = 0;
+      } else if (globalCachedToken && cacheAgeMs < 115000) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true, token: freshToken }));
-      } else {
-        const inCooldown = Date.now() < dosBlockCooldownUntil;
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          success: false,
-          error: inCooldown ? "Google rate-limiting in effect (Cooldown active)" : "Failed to solve captcha",
-          cooldown: inCooldown,
-        }));
+        res.end(JSON.stringify({ token: globalCachedToken }));
+        return;
       }
-    } catch (err) {
+
+      if (now < dosBlockCooldownUntil) {
+        const remaining = Math.ceil((dosBlockCooldownUntil - now) / 1000);
+        console.log(`[Token Sync Server] ⏳ Menunggu Cooldown IP dari Google... (${remaining}s tersisa)`);
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Google DOS Cooldown Active", cooldown: true, remaining }));
+        return;
+      }
+
+      console.log("[Token Sync Server] 🔄 Menerima request REFRESH token baru (Membuka Browser)...");
+      const newToken = await requestTokenWithMutex(true);
+      if (newToken) {
+        globalCachedToken = newToken;
+        globalCachedTokenTime = Date.now();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ token: newToken }));
+      } else {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to solve CAPTCHA", cooldown: true }));
+      }
+    } catch (e) {
       res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
@@ -922,6 +971,50 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
+async function startTokenProductionLoop() {
+  console.log("[Token Sync] 🏭 Memulai Background Token Producer Loop...");
+  while (true) {
+    try {
+      // 1. Garbage Collection: Bersihkan token yang kedaluwarsa (> 105 detik)
+      const now = Date.now();
+      let expiredCount = 0;
+      while (tokenPool.length > 0 && (now - tokenPool[0].timestamp > 105000)) {
+        tokenPool.shift();
+        expiredCount++;
+      }
+      if (expiredCount > 0) {
+        console.log(`[Token Sync] 🗑️ Membuang ${expiredCount} token basi dari antrean.`);
+      }
+
+      // 2. Jika antrean belum penuh, produksi token baru
+      if (tokenPool.length < MAX_POOL_SIZE) {
+        if (now < dosBlockCooldownUntil) {
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
+        
+        console.log(`[Token Sync] ⚙️ Memproduksi token baru... (Stok: ${tokenPool.length}/${MAX_POOL_SIZE})`);
+        // Bypass cache true
+        await requestTokenWithMutex(true);
+        
+        // Pacing: Jeda aman antar produksi (8-10 detik) untuk 1 IP
+        const delayMs = 8000 + Math.random() * 2000;
+        console.log(`[Token Sync] ⏳ Pacing: Jeda produksi selama ${(delayMs/1000).toFixed(1)} detik...`);
+        await new Promise((r) => setTimeout(r, delayMs));
+      } else {
+        // Pool penuh, istirahat sejenak
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (e) {
+      console.error("[Token Sync] Producer Loop Error:", e.message);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+}
+
+// Mulai Producer Loop (Nonaktif - diganti ke On-Demand lagi)
+// startTokenProductionLoop();
+
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`[Token Sync Server] 🚀 Berjalan di http://127.0.0.1:${PORT} (Single-Flight Anti-Ban Guard Active)`);
+  console.log(`[Token Sync Server] 🚀 Berjalan di http://127.0.0.1:${PORT} (Single-Flight On-Demand Mode Active)`);
 });
