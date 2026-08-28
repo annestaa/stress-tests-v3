@@ -2,6 +2,7 @@
 
 # ==============================================================================
 # Script Startup Bot Automation Mini Games Kemerdekaan (k6)
+# Updated: Support optimized version
 # ==============================================================================
 
 set -e
@@ -10,10 +11,32 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
 MODE="api"
-if [ "$1" = "browser" ] || [ "$1" = "api" ]; then
-  MODE="$1"
-  shift
-fi
+USE_OPTIMIZED="yes"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    browser)
+      MODE="browser"
+      shift
+      ;;
+    api)
+      MODE="api"
+      shift
+      ;;
+    --original)
+      USE_OPTIMIZED="no"
+      shift
+      ;;
+    --optimized)
+      USE_OPTIMIZED="yes"
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 # 1. Load environment variables spesifik mode (.env.api atau .env.browser)
 ENV_FILE=".env.${MODE}"
@@ -30,15 +53,20 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 MODE_UPPER=$(echo "$MODE" | tr '[:lower:]' '[:upper:]')
+VERSION_STR="OPTIMIZED ⚡"
+if [ "$USE_OPTIMIZED" = "no" ]; then
+  VERSION_STR="ORIGINAL"
+fi
+
 echo "======================================================="
-echo "🚀 k6 Mini Games Automation & Load Bot (Mode: ${MODE_UPPER})"
+echo "🚀 k6 Mini Games Automation Bot (Mode: ${MODE_UPPER} - ${VERSION_STR})"
 echo "======================================================="
 echo "Konfigurasi File : ${ENV_FILE}"
-echo "Target Base URL  : ${BASE_URL:-https://kemerdekaan.liputan6.com}"
-echo "Username         : ${MINIGAMES_USERNAME:-kbrnugroho}"
+echo "Target Base URL  : ${API_BASE_URL:-https://minigames.liputan6.com}"
+echo "Username         : ${MINIGAMES_USERNAME:-zildjiannesta}"
 echo "Pilihan Game     : ${GAME_CHOICE:-tariktambang}"
 echo "Virtual Users    : ${VUS:-1}"
-echo "Jumlah Ronde     : ${LOOP_COUNT:-100}"
+echo "Jumlah Ronde     : ${LOOP_COUNT:-9999}"
 echo "======================================================="
 
 # 2. Jalankan Token Sync Daemon di background jika belum aktif
@@ -63,6 +91,11 @@ if [ "$MODE" = "browser" ]; then
   export K6_BROWSER_ENABLED=true
   k6 run browser_play.js "$@"
 else
-  echo "⚡ Mode: Direct HTTP API Automation (play.js)..."
-  k6 run play.js "$@"
+  if [ "$USE_OPTIMIZED" = "yes" ]; then
+    echo "⚡ Mode: Simple Optimized (WORKING & SAFE)..."
+    k6 run play_optimized_simple.js "$@"
+  else
+    echo "⚡ Mode: Original (100% WORKING)..."
+    k6 run play.js "$@"
+  fi
 fi
