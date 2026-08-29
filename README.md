@@ -1,78 +1,75 @@
-# 🚀 Mini Games Kemerdekaan Automation with k6 (Anti-Ban Optimized)
+# 🚀 Minigames Kemerdekaan Automation (Node.js + Stealth)
 
-Script automation dan load testing untuk game kemerdekaan Liputan6 (`tariktambang`, `panjatpinang`, `balapkarung`) menggunakan **k6** yang dilengkapi dengan **Anti-Ban Guard, Single-Flight Solver Daemon, Persistent Context, dan Multi-Strategy reCAPTCHA Resolver**.
-
----
-
-## 📂 Struktur File
-
-- [token_sync.js]: Daemon lokal anti-ban dengan **Single-Flight Mutex Lock**, **Token Caching**, **Deteksi DOS Captcha**, **CDP Chrome Attachment**, **Persistent Profile**, dan **Proxy Routing**.
-- [play.js]: Script otomasi protokol **Direct HTTP API** dengan **Jitter Delay Anti-Bot**, exponential backoff, dan penanganan rate limit 422/429.
-- [browser_play.js]: Script otomasi **Browser UI Headless** (`k6/browser`) dengan humanized mouse movement, storage preservation, dan audio solver.
-- [.env.api]: Konfigurasi khusus untuk **Direct HTTP API** (`play.js`).
-- [.env.browser]: Konfigurasi khusus untuk **Browser UI Automation** (`browser_play.js`).
-- [.env]: Konfigurasi shared/fallback.
-- [.env.api.example] & [.env.browser.example]: Template konfigurasi masing-masing mode.
+Automation script tingkat lanjut untuk *farming* poin Minigames Kemerdekaan Liputan6 (`tariktambang`, `panjatpinang`, `balapkarung`). Versi terbaru ini telah dirombak penuh ke ekosistem **Native Node.js** dengan integrasi **Playwright Stealth**, dirancang khusus untuk ketahanan 24/7 di VPS maupun komputer lokal.
 
 ---
 
-## 🛡️ Strategi Anti-Ban & Pencegahan Blokir IP Google
+## 🌟 Fitur Unggulan
 
-Google reCAPTCHA v2 membatasi request audio challenge per IP jika mendeteksi spamming atau browser otomatis tanpa reputasi. Script ini menerapkan 5 lapis proteksi:
-
-1. **Single-Flight Solver Mutex**:
-   - Jika beberapa worker k6 membutuhkan token reCAPTCHA secara bersamaan, daemon **hanya meluncurkan 1 solver**. Worker lain akan mengantre dan menunggu hasil token yang sama, mencegah serangan multi-browser serentak ke Google.
-2. **Persistent Context & CDP Connect (1-Click Pass)**:
-   - Daemon dapat terhubung langsung ke browser Google Chrome utama yang sedang aktif via Chrome DevTools Protocol (`CDP_URL=http://127.0.0.1:9222`). Browser dengan cookies & login Google aktif akan mendapatkan **centang hijau 1-klik** tanpa memicu audio challenge sama sekali.
-3. **Deteksi DOS Captcha & Cooldown Otomatis**:
-   - Jika Google menampilkan pesan *"Your computer or network may be sending automated queries"*, script secara otomatis mengaktifkan **cooldown (90 detik)** agar limit IP pulih dan tidak diblokir permanen.
-4. **Cloud Solver Prioritization (100% Bebas IP Ban)**:
-   - Jika Anda mengisi `CAPSOLVER_API_KEY` atau `TWOCAPTCHA_API_KEY`, seluruh request verifikasi reCAPTCHA akan didelegasikan ke cloud proxy pool eksternal, sehingga IP lokal Anda sama sekali tidak pernah menyentuh Google reCAPTCHA.
-5. **Humanized Delays & Jitter**:
-   - Jeda acak (*jitter*) diterapkan di antara ronde (`ROUND_DELAY_SEC + Math.random() * 2s`) dan pergerakan mouse acak pada mode browser.
+1. **Jubah Siluman (Stealth Mode)**
+   Menggunakan `playwright-extra` dan `puppeteer-extra-plugin-stealth` untuk menyamarkan pergerakan bot agar terlihat seperti manusia sungguhan di mata Google reCAPTCHA.
+2. **Auto-Sleep & Google DOS Protection**
+   Bot mampu mendeteksi pemblokiran IP sementara (Cooldown/DOS Limit) dari Google. Jika terdeteksi, bot akan otomatis istirahat (tidur) dan mencoba lagi nanti secara perlahan tanpa membuat *crash* atau *error*.
+3. **Adaptive Auto-Stagger (Pintar)**
+   Dilengkapi sensor kemacetan antrean. Jika server Liputan6 sedang lemot (karena *stress-test* atau *traffic* padat), bot akan secara otomatis melambatkan tempo tembakan (ngerem) agar poin tidak terdegradasi (tetap mendapatkan +50 pts).
+4. **Arsitektur Dual-Daemon**
+   Dipisah menjadi 2 bagian yang berkomunikasi satu sama lain:
+   - `token_sync.js`: Pencari token Captcha.
+   - `play_node.js`: Penembak skor game.
+5. **Siap VPS (Dockerized)**
+   Tinggal jalankan `docker-compose up -d --build`, bot langsung berjalan mulus di *background* server selamanya.
 
 ---
 
-## ⚙️ Konfigurasi Lengkap (`.env`)
+## 📂 Struktur File Utama
 
-| Variabel | Deskripsi | Default / Contoh |
-| :--- | :--- | :--- |
-| `MINIGAMES_USERNAME` | Username Instagram peserta | `zildjiannesta` |
-| `GAME_CHOICE` | Pilihan game (`all`, `tariktambang`, `panjatpinang`, `balapkarung`) | `tariktambang` |
-| `VUS` | Jumlah Virtual Users paralel di k6 (**Rekomendasi anti-ban: 1**) | `1` |
-| `LOOP_COUNT` | Jumlah ronde per VU | `100` |
-| `ROUND_DELAY_SEC` | Jeda dasar antar ronde (detik) | `3` |
-| `CAPTCHA_MIN_INTERVAL_SEC`| Interval minimum antar eksekusi solver lokal | `6` |
-| `CAPTCHA_DOS_COOLDOWN_SEC`| Durasi cooldown saat Google membatasi IP | `90` |
-| `CDP_URL` | Alamat remote debugging Google Chrome asli | `http://127.0.0.1:9222` |
-| `PROXY_SERVER` / `HTTP_PROXY` | Proxy HTTP/SOCKS5 untuk merotasi IP | *(opsional)* |
-| `CAPSOLVER_API_KEY` | API Key CapSolver (Cloud Proxy Solver) | *(opsional)* |
-| `TWOCAPTCHA_API_KEY` | API Key 2Captcha (Cloud Solver) | *(opsional)* |
-| `WITAI_ACCESS_TOKEN` | Token Speech-to-Text Wit.ai untuk audio captcha | *(terpasang)* |
+- **`play_node.js`**: Otak utama penembak *Direct API* (Node.js native).
+- **`token_sync.js`**: Server penyedia Token (Playwright Stealth).
+- **`start_node.bat`**: Script 1-klik untuk menjalankan di Windows (Lokal).
+- **`docker-compose.yml` & `Dockerfile`**: File konfigurasi untuk *deploy* ke VPS.
+- **`.env.api`**: File konfigurasi (Username, Target Target, dll).
+- **`play.js` / `play_pipeline.js`**: (*Legacy*) Script lama bagi yang masih ingin menggunakan k6.
+- **`docs/`**: Kumpulan dokumen teknis dan sejarah optimisasi script lama.
+
+---
+
+## ⚙️ Konfigurasi (`.env.api`)
+
+Pastikan Anda mengedit file `.env.api` sebelum menjalankan bot:
+
+```env
+MINIGAMES_USERNAME=username_anda_disini
+GAME_CHOICE=tariktambang
+TARGET_DURATION_SEC=7.8
+REQUEST_STAGGER_SEC=0.5
+```
+*(Catatan: `TARGET_DURATION_SEC=7.8` disengaja agar tidak terlalu cepat dan poin tidak ditolak).*
 
 ---
 
 ## 🚀 Cara Menjalankan
 
-### Opsi A: Mode Google Chrome CDP (Paling Aman dari Ban IP)
-1. Buka Google Chrome asli dengan port debugging di terminal:
-   ```bash
-   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-   ```
-2. Jalankan bot k6:
-   ```bash
-   cd k6
-   ./start.sh api
-   ```
+### Opsi A: Menjalankan di Windows (Lokal Laptop)
+Sangat direkomendasikan jika Anda tidak punya VPS.
 
-### Opsi B: Mode Direct HTTP API Standalone
-```bash
-cd k6
-./start.sh api
-```
+1. Buka Terminal/CMD, ketik: `npm install`
+2. Klik ganda (Double-Click) file **`start_node.bat`**.
+3. Dua jendela layar hitam akan terbuka otomatis, biarkan saja mereka bekerja!
 
-### Opsi C: Mode Browser UI Headless (k6/browser)
-```bash
-cd k6
-./start.sh browser
-```
+### Opsi B: Menjalankan di VPS (Linux / Ubuntu)
+Cocok untuk *farming* 24 jam non-stop sambil Anda tidur.
+
+1. Buka Terminal VPS Anda, navigasikan ke folder script ini.
+2. Pastikan Docker sudah terinstall di VPS Anda.
+3. Jalankan perintah dewa ini:
+   ```bash
+   docker-compose up -d --build
+   ```
+4. Selesai! Bot akan jalan di *background*.
+5. *Untuk melihat jalannya bot (Log):* `docker logs -f bot-game-pipeline`
+
+---
+
+## ⚠️ Disklaimer & Aturan Main
+* Penggunaan bot/script automation pada platform game *online* bisa melanggar Syarat dan Ketentuan layanan. Gunakan untuk tujuan **edukasi dan stress-testing** saja.
+* Developer tidak bertanggung jawab atas akun yang di-*banned* atau diblokir. *Do it at your own risk!*
