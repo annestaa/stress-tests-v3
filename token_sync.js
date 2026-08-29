@@ -1015,6 +1015,6 @@ async function startTokenProductionLoop() {
 // Mulai Producer Loop (Nonaktif - diganti ke On-Demand lagi)
 // startTokenProductionLoop();
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`[Token Sync Server] 🚀 Berjalan di http://127.0.0.1:${PORT} (Single-Flight On-Demand Mode Active)`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`[Token Sync Server] 🚀 Berjalan di http://0.0.0.0:${PORT} (Single-Flight On-Demand Mode Active)`);
 });
