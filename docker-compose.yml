@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  captcha-solver:
+    build: .
+    container_name: bot-captcha-solver
+    # Menjalankan background worker pencari token
+    command: node token_sync.js
+    restart: always
+    volumes:
+      - ./.env.api:/app/.env.api
+      - ./user_data:/app/user_data
+    environment:
+      - ENV_FILE=.env.api
+
+  game-pipeline:
+    build: .
+    container_name: bot-game-pipeline
+    # Menjalankan worker utama (ganti ke play_node.js jika Anda menggunakan file itu)
+    command: node play_node.js
+    restart: always
+    volumes:
+      - ./.env.api:/app/.env.api
+    environment:
+      - ENV_FILE=.env.api
+      - SYNC_URL=http://captcha-solver:9876
+    depends_on:
+      - captcha-solver

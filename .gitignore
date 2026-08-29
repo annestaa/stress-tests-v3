@@ -20,10 +20,6 @@ Thumbs.db
 .claude/
 .remember/
 
-.env
-.env.api
-.env.browser
-
 bun.lock
 pnpm-lock.yaml
 yarn.lock

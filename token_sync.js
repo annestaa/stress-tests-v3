@@ -2,7 +2,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium } from "playwright-extra";
+import stealth from "puppeteer-extra-plugin-stealth";
+chromium.use(stealth());
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, ".env");
@@ -1015,6 +1017,6 @@ async function startTokenProductionLoop() {
 // Mulai Producer Loop (Nonaktif - diganti ke On-Demand lagi)
 // startTokenProductionLoop();
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`[Token Sync Server] 🚀 Berjalan di http://127.0.0.1:${PORT} (Single-Flight On-Demand Mode Active)`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`[Token Sync Server] 🚀 Berjalan di http://0.0.0.0:${PORT} (Single-Flight On-Demand Mode Active)`);
 });
