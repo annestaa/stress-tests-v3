@@ -23,5 +23,6 @@ services:
       - ./.env.api:/app/.env.api
     environment:
       - ENV_FILE=.env.api
+      - SYNC_URL=http://captcha-solver:9876
     depends_on:
       - captcha-solver

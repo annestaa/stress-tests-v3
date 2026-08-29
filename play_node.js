@@ -106,10 +106,10 @@ async function getToken(force = false) {
   console.log(`  🔄 Token (${reason})...`);
 
   try {
-    // Di Windows lokal kita pakai 127.0.0.1, di VPS biarkan pakai captcha-solver
+    const baseUrl = process.env.SYNC_URL || "http://127.0.0.1:9876";
     const url = force
-      ? "http://127.0.0.1:9876/refresh?force=true"
-      : "http://127.0.0.1:9876/refresh";
+      ? `${baseUrl}/refresh?force=true`
+      : `${baseUrl}/refresh`;
     const res = await fetchJson(url);
     if (res.status === 200) {
       const json = JSON.parse(res.body);

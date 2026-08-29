@@ -2,7 +2,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium } from "playwright-extra";
+import stealth from "puppeteer-extra-plugin-stealth";
+chromium.use(stealth());
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, ".env");
