@@ -70,6 +70,7 @@ function makeHeaders() {
     "User-Agent": UA,
     Origin: BASE_URL,
     Referer: `${BASE_URL}/games/${game}`,
+    Connection: "keep-alive",
   };
 }
 
