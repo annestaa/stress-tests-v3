@@ -670,6 +670,25 @@ async function solveRecaptchaSafely(bypassCache = false) {
 
     // DETEKSI DOS BLOCK / IP RATE LIMIT GOOGLE
     if (await dosBlock.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const isHeadless = getEnvValue("HEADLESS", "true").toLowerCase() !== "false";
+      if (!isHeadless || isCDP) {
+        console.log("\n🚨 [MANUAL VERIFICATION REQUIRED] IP terkena DOS Block!");
+        console.log("⚠️ SILAKAN KEMBALI KE TAB GAMBAR (Atau Reload) DAN SELESAIKAN CAPTCHA SECARA MANUAL DI BROWSER! (Menunggu max 2 menit...)\n");
+        for (let i = 0; i < 40; i++) {
+          await page.waitForTimeout(3000);
+          let manualToken = await page.evaluate(() => {
+            return typeof window.grecaptcha !== "undefined" && typeof window.grecaptcha.getResponse === "function"
+              ? window.grecaptcha.getResponse() : document.getElementById("g-recaptcha-response")?.value || "";
+          }).catch(() => "");
+          if (manualToken && manualToken.length > 30) {
+            console.log("[Token Sync] ✅ Terima kasih! Captcha manual berhasil diverifikasi.");
+            updateEnvToken(manualToken);
+            return manualToken;
+          }
+        }
+        console.log("[Token Sync] ❌ Waktu habis! Gagal memverifikasi secara manual.");
+      }
+
       const cooldownDuration = parseInt(getEnvValue("CAPTCHA_DOS_COOLDOWN_SEC", "90"), 10);
       dosBlockCooldownUntil = Date.now() + cooldownDuration * 1000;
       console.error(`\n[Token Sync] ⚠️⚠️ PERINGATAN: GOOGLE MEMBATASI IP (DOS Block / Automated Queries)!`);
@@ -690,6 +709,25 @@ async function solveRecaptchaSafely(bypassCache = false) {
 
       // Cek apakah setelah klik audio tombol diblokir
       if (await dosBlock.isVisible({ timeout: 2000 }).catch(() => false)) {
+        const isHeadless = getEnvValue("HEADLESS", "true").toLowerCase() !== "false";
+        if (!isHeadless || isCDP) {
+          console.log("\n🚨 [MANUAL VERIFICATION REQUIRED] IP terkena DOS Block saat membuka Audio!");
+          console.log("⚠️ SILAKAN KEMBALI KE TAB GAMBAR (Klik tombol gambar di bawah) DAN SELESAIKAN CAPTCHA SECARA MANUAL! (Menunggu max 2 menit...)\n");
+          for (let i = 0; i < 40; i++) {
+            await page.waitForTimeout(3000);
+            let manualToken = await page.evaluate(() => {
+              return typeof window.grecaptcha !== "undefined" && typeof window.grecaptcha.getResponse === "function"
+                ? window.grecaptcha.getResponse() : document.getElementById("g-recaptcha-response")?.value || "";
+            }).catch(() => "");
+            if (manualToken && manualToken.length > 30) {
+              console.log("[Token Sync] ✅ Terima kasih! Captcha manual berhasil diverifikasi.");
+              updateEnvToken(manualToken);
+              return manualToken;
+            }
+          }
+          console.log("[Token Sync] ❌ Waktu habis! Gagal memverifikasi secara manual.");
+        }
+
         dosBlockCooldownUntil = Date.now() + 90000;
         console.error("[Token Sync] ⚠️ Google memblokir request audio challenge untuk IP ini (DOS limit). Cooldown 90s.");
         return "";
@@ -802,6 +840,28 @@ async function solveRecaptchaSafely(bypassCache = false) {
       console.log(`[Token Sync] ✅ reCAPTCHA terverifikasi! Token didapatkan.`);
       updateEnvToken(token);
       return token;
+    }
+
+    // Jika sampai akhir token tidak didapatkan, beri kesempatan manual jika browser terlihat (Headless=false)
+    const isHeadless = getEnvValue("HEADLESS", "true").toLowerCase() !== "false";
+    if (!isHeadless || isCDP) {
+      console.log("\n🚨 [MANUAL VERIFICATION REQUIRED] Otomatisasi gagal menyelesaikan Captcha.");
+      console.log("⚠️ JANGAN DITUTUP! SILAKAN SELESAIKAN CAPTCHA SECARA MANUAL DI BROWSER! (Menunggu max 2 menit...)\n");
+      for (let i = 0; i < 40; i++) {
+        await page.waitForTimeout(3000);
+        let manualToken = await page.evaluate(() => {
+          return typeof window.grecaptcha !== "undefined" && typeof window.grecaptcha.getResponse === "function"
+            ? window.grecaptcha.getResponse()
+            : document.getElementById("g-recaptcha-response")?.value || localStorage.getItem("_grecaptcha") || "";
+        }).catch(() => "");
+        
+        if (manualToken && manualToken.length > 30) {
+          console.log("[Token Sync] ✅ Terima kasih! Captcha manual berhasil diverifikasi.");
+          updateEnvToken(manualToken);
+          return manualToken;
+        }
+      }
+      console.log("[Token Sync] ❌ Waktu habis! Gagal memverifikasi secara manual.");
     }
   } catch (err) {
     console.error("[Token Sync] Error solveRecaptchaSafely:", err.message);

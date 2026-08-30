@@ -4,8 +4,8 @@ services:
   captcha-solver:
     build: .
     container_name: bot-captcha-solver
-    # Menjalankan background worker pencari token
-    command: node token_sync.js
+    # Menjalankan background worker pencari token dengan monitor virtual (xvfb)
+    command: xvfb-run --auto-servernum -- node token_sync.js
     restart: always
     volumes:
       - ./.env.api:/app/.env.api

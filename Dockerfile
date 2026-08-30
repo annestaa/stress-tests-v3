@@ -10,7 +10,8 @@ COPY package.json ./
 # Install dependensi (ini akan menginstall playwright sesuai versi di package.json)
 RUN npm install
 
-# Install dependencies sistem operasi yang dibutuhkan browser Playwright
+# Install dependencies sistem operasi yang dibutuhkan browser Playwright beserta Xvfb
+RUN apt-get update && apt-get install -y xvfb && rm -rf /var/lib/apt/lists/*
 RUN npx playwright install --with-deps chromium
 
 # Copy seluruh file project ke dalam container
