@@ -122,8 +122,8 @@ async function getToken(force = false) {
         return cachedToken;
       }
     } else if (res.status === 503) {
-      console.warn("  ⛔ Google Cooldown aktif, tunggu...");
-      await sleep(30);
+      console.warn("  ⛔ Google Cooldown aktif, langsung retry...");
+      await sleep(1);
     }
   } catch (e) {
     console.warn("  ⚠️ Daemon error:", e.message);
@@ -196,8 +196,8 @@ async function main() {
     // 1. Ambil token
     const token = await getToken(false);
     if (!token) {
-      console.warn("  Token gagal, retry 10s...");
-      await sleep(10);
+      console.warn("  Token gagal, langsung retry...");
+      await sleep(1);
       continue;
     }
 
