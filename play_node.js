@@ -32,7 +32,7 @@ function loadDotEnv() {
         val = val.replace(/^["']|["']$/g, "");
         if (!(key in envObj)) envObj[key] = val;
       }
-    } catch {}
+    } catch { }
   }
   return envObj;
 }
@@ -50,7 +50,7 @@ const TIME_LEFT = parseInt(env("TIME_LEFT", "22"), 10);
 const STAGGER_SEC = parseFloat(env("REQUEST_STAGGER_SEC", "0.5"));
 
 // Durasi gameplay minimum (server enforce >= 7s, tier <10s = 50pts)
-const TARGET_DUR = parseFloat(env("TARGET_DURATION_SEC", "7.8"));
+const TARGET_DUR = parseFloat(env("TARGET_DURATION_SEC", "8.5"));
 
 // Token valid ~120s, kita pakai 125s biar aman > 2 menit
 const TOKEN_LIFE = 125;
@@ -74,7 +74,7 @@ function makeHeaders() {
 }
 
 async function fetchJson(url, opts = {}) {
-  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(30000) });
+  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(150000) });
   return { status: res.status, body: await res.text() };
 }
 
@@ -110,7 +110,9 @@ async function getToken(force = false) {
     const url = force
       ? `${baseUrl}/refresh?force=true`
       : `${baseUrl}/refresh`;
-    const res = await fetchJson(url);
+    const res = await fetchJson(url, {
+      headers: { "Bypass-Tunnel-Reminder": "true" }
+    });
     if (res.status === 200) {
       const json = JSON.parse(res.body);
       if (json && json.token) {
@@ -206,9 +208,8 @@ async function main() {
 
     // 2. Pipeline loop selama token valid
     const cycleStart = Date.now();
-    const pending = []; // { token, openedAt }
-    let cycleWins = 0;
-    let cyclePts = 0;
+    const cyclePromises = [];
+    const cycleStats = { wins: 0, pts: 0 };
     let consecutive429 = 0;
 
     while ((Date.now() - cycleStart) < (TOKEN_LIFE - 10) * 1000) {
@@ -227,20 +228,27 @@ async function main() {
             try {
               const json = JSON.parse(res.body);
               if (json && json.token) {
-                pending.push({ token: json.token, openedAt });
+                // SCHEDULE SUBMISSION SECARA LANGSUNG & PARALEL
+                const sessionToken = json.token;
+                const p = sleep(TARGET_DUR).then(() => {
+                  return submitScore(sessionToken, openedAt, game, headers).then(result => {
+                    if (result > 0) {
+                      totalWins++; totalPts += result;
+                      cycleStats.wins++; cycleStats.pts += result;
+                    }
+                  });
+                });
+                cyclePromises.push(p);
               }
-            } catch {}
+            } catch { }
           } else if (res.status === 429) {
             consecutive429++;
             const backoff = consecutive429 <= 1 ? 3 : consecutive429 <= 2 ? 5 : 8;
             console.warn(`  ⛔ 429 Session (${consecutive429}x)! Jeda ${backoff}s`);
             await sleep(backoff);
-            // Tetap submit yang sudah matang
-            await drainReady(pending, game, headers);
             continue;
           } else if (res.status === 422) {
-            console.warn("  ⚠️ 422 Token rejected -> flush & refresh");
-            await flushAll(pending, game, headers);
+            console.warn("  ⚠️ 422 Token rejected -> refresh");
             await getToken(true);
             break;
           }
@@ -248,94 +256,34 @@ async function main() {
           console.warn(`  Session error: ${e.message}`);
         }
       } else {
-        // Terlalu banyak 429, pause buka session, submit saja
+        // Terlalu banyak 429, pause buka session
         console.warn("  Banyak 429, pause open 10s...");
         await sleep(10);
         consecutive429 = 0;
       }
 
-      // B: Submit semua yang sudah matang
-      const result = await drainReady(pending, game, headers);
-      cycleWins += result.wins;
-      cyclePts += result.pts;
-
-      // C: Dynamic Stagger (Auto-adjust speed based on server lag)
-      const expectedQueue = Math.ceil(TARGET_DUR / STAGGER_SEC);
-      let currentStagger = STAGGER_SEC;
-      
-      if (pending.length > expectedQueue * 1.5) {
-        currentStagger = STAGGER_SEC * 4; // Server sangat lemot, rem mendadak
-        console.warn(`  🐌 Auto-Stagger: Antrean panjang (${pending.length}), melambat ke ${currentStagger}s`);
-      } else if (pending.length > expectedQueue * 1.2) {
-        currentStagger = STAGGER_SEC * 2; // Server mulai kewalahan, pelankan
-      }
-      
-      await sleep(currentStagger);
+      // Jeda antar pembukaan session (stagger natural)
+      await sleep(STAGGER_SEC);
 
       // Cek token expiry
       const tokenAge = (Date.now() - tokenTime) / 1000;
       if (tokenAge >= TOKEN_LIFE - 5) {
-        console.log(`  Token expiring (${tokenAge.toFixed(0)}s), flushing...`);
-        const flushResult = await flushAll(pending, game, headers);
-        cycleWins += flushResult.wins;
-        cyclePts += flushResult.pts;
+        console.log(`  Token expiring (${tokenAge.toFixed(0)}s)...`);
         break;
       }
     }
 
-    // Flush sisa
-    if (pending.length > 0) {
-      const flushResult = await flushAll(pending, game, headers);
-      cycleWins += flushResult.wins;
-      cyclePts += flushResult.pts;
+    // Tunggu semua proses submit di cycle ini selesai sebelum mencetak log cycle
+    if (cyclePromises.length > 0) {
+      await Promise.all(cyclePromises);
     }
 
-    totalWins += cycleWins;
-    totalPts += cyclePts;
-
     const elapsed = (Date.now() - cycleStart) / 1000;
-    const gpm = cycleWins > 0 ? (cycleWins / elapsed * 60).toFixed(1) : "0";
-    console.log(`  🏁 Cycle ${cycleNum}: ${cycleWins} wins in ${elapsed.toFixed(0)}s (${gpm}/min) +${cyclePts}pts | Total: ${totalWins} wins, ${totalPts}pts`);
+    const gpm = cycleStats.wins > 0 ? (cycleStats.wins / elapsed * 60).toFixed(1) : "0";
+    console.log(`  🏁 Cycle ${cycleNum}: ${cycleStats.wins} wins in ${elapsed.toFixed(0)}s (${gpm}/min) +${cycleStats.pts}pts | Total: ${totalWins} wins, ${totalPts}pts`);
 
     // Minimal gap sebelum cycle berikutnya
     await sleep(0.5);
-  }
-
-  // Submit matang dari queue (non-blocking)
-  async function drainReady(queue, gameName, hdrs) {
-    let wins = 0;
-    let pts = 0;
-    const now = Date.now();
-    let i = 0;
-    while (i < queue.length) {
-      const age = (now - queue[i].openedAt) / 1000;
-      if (age >= TARGET_DUR) {
-        const session = queue.splice(i, 1)[0];
-        const result = await submitScore(session.token, session.openedAt, gameName, hdrs);
-        if (result > 0) { wins++; pts += result; }
-        if (result === -1) break; // Rate limited, stop draining
-      } else {
-        i++;
-      }
-    }
-    return { wins, pts };
-  }
-
-  // Flush semua, tunggu masing-masing matang
-  async function flushAll(queue, gameName, hdrs) {
-    let wins = 0;
-    let pts = 0;
-    while (queue.length > 0) {
-      const session = queue.shift();
-      const elapsed = (Date.now() - session.openedAt) / 1000;
-      const wait = TARGET_DUR - elapsed;
-      if (wait > 0) await sleep(wait);
-      const result = await submitScore(session.token, session.openedAt, gameName, hdrs);
-      if (result > 0) { wins++; pts += result; }
-      // Stagger antar submit saat flush
-      if (queue.length > 0) await sleep(STAGGER_SEC);
-    }
-    return { wins, pts };
   }
 }
 
